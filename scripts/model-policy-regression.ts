@@ -86,11 +86,11 @@ const runtimeOptions = resolveCodexModelOptions([{
   supportedReasoningEfforts: ["low", "high"]
 }]);
 assert.deepEqual(runtimeOptions.map((option) => option.id), ["codex-future-primary", "codex-future-secondary"]);
-assert.equal(runtimeOptions.find((option) => option.id === "codex-future-primary")?.available, true);
+assert.equal(runtimeOptions.find((option) => option.id === "codex-future-primary")?.available, false);
 assert.equal(runtimeOptions.find((option) => option.id === "codex-future-secondary")?.available, true);
 const runtimeAuto = resolveCodexSelection(runtimeOptions, "__auto", "low");
-assert.equal(runtimeAuto.model.id, "codex-future-primary");
-assert.equal(runtimeAuto.reasoningEffort, "max");
+assert.equal(runtimeAuto.model?.id, "codex-future-secondary");
+assert.equal(runtimeAuto.reasoningEffort, "high");
 assert.equal(reasoningLabel("max", "zh"), "推理最大");
 assert.equal(reasoningLabel("max", "en", true), "Max");
 assert.equal(runtimeAuto.effectiveSelection, "__auto");
@@ -99,13 +99,28 @@ assert.equal(autoModelLabel("en"), "Auto (recommended)");
 assert.equal(conversationModelLabel("__auto", runtimeAuto.model?.id, "en"), "Auto (recommended)");
 assert.equal(conversationModelLabel("__auto", undefined, "en"), "Auto (recommended)");
 const pinnedSecondary = resolveCodexSelection(runtimeOptions, "codex-future-secondary", "low");
-assert.equal(pinnedSecondary.model.id, "codex-future-secondary");
+assert.equal(pinnedSecondary.model?.id, "codex-future-secondary");
 assert.equal(pinnedSecondary.reasoningEffort, "low");
 assert.equal(conversationModelLabel("codex-future-secondary", pinnedSecondary.model?.id, "zh"), "Future secondary zh");
-const pinnedPrimary = resolveCodexSelection(runtimeOptions, "codex-future-primary", "low");
+const primaryCatalogOptions = resolveCodexModelOptions([{
+  id: "codex-future-primary",
+  displayName: "Future primary",
+  supportedReasoningEfforts: ["low", "high"]
+}]);
+const pinnedPrimary = resolveCodexSelection(primaryCatalogOptions, "codex-future-primary", "low");
 assert.equal(pinnedPrimary.model?.id, "codex-future-primary");
 assert.equal(pinnedPrimary.reasoningEffort, "low");
 assert.equal(pinnedPrimary.effectiveSelection, "codex-future-primary");
+const appDefaultWithCustom = resolveCodexModelOptions([
+  { id: "codex-future-primary", displayName: "Future primary", supportedReasoningEfforts: ["low", "high"] },
+  { id: "custom-local", displayName: "Custom Local", isDefault: true, supportedReasoningEfforts: ["low"] }
+]);
+assert.deepEqual(
+  appDefaultWithCustom.map((option) => option.id),
+  ["codex-future-primary", "codex-future-secondary", "custom-local"]
+);
+assert.equal(resolveCodexSelection(appDefaultWithCustom, "__auto", "low").model?.id, "codex-future-primary");
+assert.equal(conversationModelLabel("custom-local", "custom-local", "en", appDefaultWithCustom), "Custom Local");
 
 const aliasLinkedOptions = resolveCodexModelOptions([{
   id: "codex-future-primary",
@@ -156,21 +171,31 @@ const futureCatalog = normalizeCodexModelCatalog({
 const futureOptions = resolveCodexModelOptions(futureCatalog.models);
 const futureAuto = resolveCodexSelection(futureOptions, "__auto", "low");
 assert.equal(futureCatalog.source, "codex_app_server_model_list");
-assert.equal(futureAuto.model?.id, "codex-future-primary");
-assert.equal(futureAuto.reasoningEffort, "max");
-assert.deepEqual(futureAuto.reasoningOptions, ["low", "high", "xhigh", "max", "ultra"]);
+assert.equal(futureAuto.model?.id, "codex-future-secondary");
+assert.equal(futureAuto.reasoningEffort, "high");
+assert.deepEqual(futureAuto.reasoningOptions, ["low", "high"]);
 assert.equal(futureAuto.effectiveSelection, "__auto");
-assert.equal(futureOptions.some((option) => option.id === "codex-6"), false);
+assert.equal(futureOptions.some((option) => option.id === "codex-6"), true);
+assert.equal(futureOptions.find((option) => option.id === "codex-6")?.label_en, "Codex 6");
 
-const localProviderDefaultOptions = resolveCodexModelOptions([{
-  id: "deepseek-flash",
-  displayName: "DeepSeek Flash",
-  isDefault: true,
-  defaultReasoningEffort: "high",
-  supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }]
-}]);
-assert.equal(localProviderDefaultOptions.some((option) => option.id === "deepseek-flash"), false);
-assert.equal(resolveCodexSelection(localProviderDefaultOptions, "__auto", "low").model?.id, "codex-future-primary");
+const localProviderDefaultOptions = resolveCodexModelOptions(normalizeCodexModelCatalog({
+  data: [{
+    id: "deepseek-flash",
+    displayName: "DeepSeek Flash",
+    isDefault: true,
+    defaultReasoningEffort: "high",
+    supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }]
+  }],
+  nextCursor: null
+}).models);
+assert.equal(localProviderDefaultOptions.some((option) => option.id === "deepseek-flash"), true);
+const localProviderAuto = resolveCodexSelection(localProviderDefaultOptions, "__auto", "low");
+assert.equal(localProviderAuto.model?.id, "deepseek-flash");
+assert.equal(localProviderAuto.reasoningEffort, "high");
+assert.equal(
+  conversationModelLabel("deepseek-flash", "deepseek-flash", "en", localProviderDefaultOptions),
+  "DeepSeek Flash"
+);
 const emptyOptions = resolveCodexModelOptions([]);
 assert.equal(emptyOptions.find((option) => option.id === "codex-future-primary")?.available, true);
 assert.equal(emptyOptions.find((option) => option.id === "codex-future-secondary")?.available, false);

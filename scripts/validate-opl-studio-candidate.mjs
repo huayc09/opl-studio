@@ -631,14 +631,15 @@ function assertCodexModelControls(evidence, app, rendererSource) {
   assert(evidence.model_list_pagination_regression?.validation_command === "npm run test:webui-host", "candidate evidence must record the model/list pagination command");
   assert(settings.includes('modelAccess: "__auto"'), "settings must default to App-owned Auto model resolution");
   assert(settings.includes("codexModelPolicy.defaultReasoningEffort"), "settings default reasoning must consume the App-derived policy");
-  assert(settingsPanel.includes("modelOptions.map") && slotHost.includes("studio.modelOptions.filter"), "DSH composer and Settings must render the App-derived model list");
+  assert(settingsPanel.includes("modelOptions.filter") && slotHost.includes("studio.modelOptions.filter"), "DSH composer and Settings must render the App preference list plus live catalog models");
   assert(settingsPanel.includes("codexModelPolicy.reasoningOptions.map") && slotHost.includes("studio.reasoningOptions.map"), "DSH composer and Settings must render the App-derived reasoning list");
   assert(policySource.includes('invalidPolicy("policy is missing")'), "missing App model policy injection must fail explicitly");
   assert(!policySource.includes("fallbackModelOptions") && !policySource.includes("fallbackReasoningOptions"), "source model policy must not keep versioned fallback lists");
   assert(app.includes("bridge.readCodexModels()"), "renderer must read app-server model availability");
   assert(app.includes("resolveCodexModelOptions(codexCatalog)"), "renderer must filter fixed alternatives through the app-server catalog");
   assert(app.includes("setCodexCatalog(catalog.models)") && app.includes("setCodexCatalog([])"), "renderer must retain the App default route when model catalog discovery is empty or unavailable");
-  assert(policySource.includes("available: isAppDefault"), "model/list must not veto the App default route");
+  assert(policySource.includes("available: catalogAvailable ? runtimes.length > 0 : isAppDefault"), "an empty model catalog must keep the App default as the offline fallback");
+  assert(policySource.includes("catalogOptions"), "model/list models outside the App frontier list must remain selectable");
   assert(app.includes('if ((!text && !pendingSelections.length) || !resolvedModel) return;'), "composer must require text or selected inputs and block unavailable fixed selections before turn/start");
   assert(
     app.includes('if (sendState === "running")')

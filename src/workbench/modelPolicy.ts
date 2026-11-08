@@ -14,6 +14,7 @@ type CodexCatalogCapability = {
   model?: string;
   displayName?: string;
   isDefault?: boolean;
+  hidden?: boolean;
   defaultReasoningEffort?: string;
   supportedReasoningEfforts: string[];
 };
@@ -150,6 +151,7 @@ function catalogModelGroup(
 }
 
 export function resolveCodexModelOptions(catalog: CodexCatalogCapability[]): ResolvedCodexModelOption[] {
+  const catalogAvailable = catalog.length > 0;
   const knownGroups = codexModelPolicy.modelOptions.map((option) => ({
     option,
     runtimes: catalogModelGroup(catalog, option.id)
@@ -167,7 +169,10 @@ export function resolveCodexModelOptions(catalog: CodexCatalogCapability[]): Res
       ?? (isAppDefault ? codexModelPolicy.defaultReasoningEffort : undefined);
     return {
       ...option,
-      available: isAppDefault || supportedReasoningEfforts.length > 0,
+      // An empty catalog means discovery is unavailable, so the App default
+      // stays the offline fallback. A non-empty catalog is authoritative for
+      // availability and may omit the App default entirely.
+      available: catalogAvailable ? runtimes.length > 0 : isAppDefault,
       known: true,
       isCatalogDefault: Boolean(catalogDefault),
       defaultReasoningEffort: configuredReasoningEffort
@@ -184,33 +189,45 @@ export function resolveCodexModelOptions(catalog: CodexCatalogCapability[]): Res
     };
   });
 
-  const unknownCatalogDefault = catalog.find((item) =>
-    item.isDefault === true
-    && !knownGroups.some(({ runtimes }) => runtimes.includes(item))
-  );
-  if (!unknownCatalogDefault || !codexModelPolicy.acceptUnknownCatalogDefault) return knownOptions;
-
-  const supportedReasoningEfforts = unknownCatalogDefault.supportedReasoningEfforts.filter(isReasoningEffort);
-  const defaultReasoningEffort = codexModelPolicy.useHighestSupportedReasoningForUnknown
-    ? supportedReasoningEfforts.at(-1)
-    : undefined;
-  const label = unknownCatalogDefault.displayName?.trim() || unknownCatalogDefault.id;
-  return [...knownOptions, {
-    id: unknownCatalogDefault.id,
-    label_zh: label,
-    label_en: label,
-    available: true,
-    known: false,
-    isCatalogDefault: true,
-    defaultReasoningEffort:
-      defaultReasoningEffort
-      ?? (isReasoningEffort(unknownCatalogDefault.defaultReasoningEffort)
-        ? unknownCatalogDefault.defaultReasoningEffort
-        : codexModelPolicy.defaultReasoningEffort),
-    supportedReasoningEfforts: supportedReasoningEfforts.length
-      ? supportedReasoningEfforts
-      : [codexModelPolicy.defaultReasoningEffort]
-  }];
+  // The App frontier list is a display preference, not an allowlist. Every
+  // model the live Codex catalog advertises remains selectable, so users on
+  // third-party or self-hosted catalogs are not reduced to the App defaults.
+  const claimedIds = new Set<string>();
+  for (const { option, runtimes } of knownGroups) {
+    claimedIds.add(option.id);
+    for (const item of runtimes) {
+      if (isModelId(item.id)) claimedIds.add(item.id);
+      if (isModelId(item.model)) claimedIds.add(item.model);
+    }
+  }
+  const catalogOptions: ResolvedCodexModelOption[] = [];
+  const seen = new Set<string>();
+  for (const item of catalog) {
+    if (item.hidden === true) continue;
+    const id = isModelId(item.id) ? item.id : item.model;
+    if (!isModelId(id) || seen.has(id) || claimedIds.has(id)) continue;
+    seen.add(id);
+    const supportedReasoningEfforts = [...new Set(item.supportedReasoningEfforts.filter(isReasoningEffort))];
+    const label = item.displayName?.trim() || id;
+    catalogOptions.push({
+      id,
+      label_zh: label,
+      label_en: label,
+      available: true,
+      known: false,
+      isCatalogDefault: item.isDefault === true,
+      defaultReasoningEffort: isReasoningEffort(item.defaultReasoningEffort)
+        && supportedReasoningEfforts.includes(item.defaultReasoningEffort)
+          ? item.defaultReasoningEffort
+          : codexModelPolicy.useHighestSupportedReasoningForUnknown
+            ? supportedReasoningEfforts.at(-1) ?? codexModelPolicy.defaultReasoningEffort
+            : codexModelPolicy.defaultReasoningEffort,
+      supportedReasoningEfforts: supportedReasoningEfforts.length
+        ? supportedReasoningEfforts
+        : [codexModelPolicy.defaultReasoningEffort]
+    });
+  }
+  return [...knownOptions, ...catalogOptions];
 }
 
 export function resolveCodexSelection(
@@ -218,12 +235,14 @@ export function resolveCodexSelection(
   selection: CodexModelSelection,
   requestedReasoning: CodexReasoningEffort
 ) {
-  // OPL Auto is product-owned. Codex's provider-local `isDefault` may point at
-  // a local/custom model (for example deepseek-flash), but that must not
-  // replace the OPL App default Astra policy for ordinary OPL sessions.
-  const defaultModel = options.find((option) => option.id === codexModelPolicy.defaultModel)
-    ?? options.find((option) => option.available)
-    ?? options[0]!;
+  // OPL Auto is product-owned and keeps the App default route while the live
+  // catalog still offers it. When the catalog omits the App default, Auto
+  // follows catalog_without_default_policy: first available frontier-preference
+  // model, then the first available catalog model. The catalog's own
+  // `isDefault` never replaces an available App default.
+  const defaultModel = options.find((option) => option.id === codexModelPolicy.defaultModel && option.available)
+    ?? options.find((option) => option.known && option.available)
+    ?? options.find((option) => option.available);
   const requestedModel = options.find((option) => option.id === selection);
   const effectiveSelection = selection;
   const model = selection === "__auto"
@@ -237,20 +256,30 @@ export function resolveCodexSelection(
       effectiveSelection
     };
   }
+  const autoUsesAppDefault = model.id === codexModelPolicy.defaultModel;
   const reasoningOptions = selection === "__auto"
-    ? model.known ? [...codexModelPolicy.reasoningOptions] : model.supportedReasoningEfforts
+    ? autoUsesAppDefault ? [...codexModelPolicy.reasoningOptions] : model.supportedReasoningEfforts
     : model.supportedReasoningEfforts;
+  const autoReasoningEffort = autoUsesAppDefault
+    ? codexModelPolicy.knownModelReasoningEffortOverrides[model.id] ?? codexModelPolicy.defaultReasoningEffort
+    : model.defaultReasoningEffort;
   const reasoningEffort = selection === "__auto"
-    ? model.known
-      ? codexModelPolicy.knownModelReasoningEffortOverrides[model.id] ?? codexModelPolicy.defaultReasoningEffort
-      : model.defaultReasoningEffort
+    ? reasoningOptions.includes(autoReasoningEffort)
+      ? autoReasoningEffort
+      : reasoningOptions.at(-1) ?? autoReasoningEffort
     : reasoningOptions.includes(requestedReasoning)
       ? requestedReasoning
       : reasoningOptions.at(-1) ?? model.defaultReasoningEffort;
   return { model, reasoningEffort, reasoningOptions, effectiveSelection };
 }
 
-export function modelLabel(model: CodexModelId, locale: WorkbenchLocale): string {
+export function modelLabel(
+  model: CodexModelId,
+  locale: WorkbenchLocale,
+  options?: readonly ResolvedCodexModelOption[]
+): string {
+  const resolved = options?.find((item) => item.id === model);
+  if (resolved) return locale === "zh" ? resolved.label_zh : resolved.label_en;
   const option = codexModelPolicy.modelOptions.find((item) => item.id === model);
   return locale === "zh" ? option?.label_zh ?? model : option?.label_en ?? model;
 }
@@ -262,11 +291,12 @@ export function autoModelLabel(locale: WorkbenchLocale): string {
 export function conversationModelLabel(
   selection: CodexModelSelection,
   resolvedModel: CodexModelId | undefined,
-  locale: WorkbenchLocale
+  locale: WorkbenchLocale,
+  options?: readonly ResolvedCodexModelOption[]
 ): string {
   return selection === "__auto"
     ? autoModelLabel(locale)
-    : modelLabel(selection, locale);
+    : modelLabel(selection, locale, options);
 }
 
 export function reasoningLabel(effort: CodexReasoningEffort, locale: WorkbenchLocale, compact = false): string {
