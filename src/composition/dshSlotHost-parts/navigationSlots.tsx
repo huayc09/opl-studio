@@ -1,6 +1,7 @@
-import { Activity, Archive, CalendarClock, GitFork, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { MenuItemButton } from "@deepseek-ai/dsh-client-ui-primitives";
+import { Activity, Archive, CalendarClock, FolderOpen, FolderPlus, GitFork, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Menu, MenuItemButton, type MenuEntry } from "@deepseek-ai/dsh-client-ui-primitives";
+import type { WorkspaceView } from "@deepseek-ai/dsh-api-workspace-controller/client";
 import { AppFrame } from "@opl-vendor/dsh-app-frame";
 import { SidebarRoot } from "@opl-vendor/dsh-sidebar-root";
 import { ConversationRoot } from "@opl-vendor/dsh-conversation-root";
@@ -20,6 +21,57 @@ import {
   useStudioWorkspaceShortcuts,
   translate
 } from "./studioContext";
+
+function directoryLabel(path: string): string {
+  const parts = path.replace(/[\\/]+$/, "").split(/[\\/]/);
+  return parts.at(-1) || path;
+}
+
+function workspaceView(path: string): WorkspaceView {
+  const now = new Date().toISOString();
+  return { workspaceId: path as WorkspaceView["workspaceId"], path, title: directoryLabel(path), sessionIds: [], createdAt: now, updatedAt: now };
+}
+
+export function HeroWorkspaceSlot({ open, anchorRef, selectedId, onPick, onClose }: {
+  open: boolean;
+  anchorRef: RefObject<HTMLElement | null>;
+  selectedId?: string;
+  onPick(workspaceId: string): void;
+  onClose(): void;
+}) {
+  const studio = useStudio();
+  const projects = studio.threadProjects.filter((project) => !project.projectless);
+  const items: MenuEntry[] = [
+    ...projects.map((project) => ({ id: project.id, label: project.label, icon: <FolderOpen aria-hidden="true" size={16} /> })),
+    ...(studio.pendingWorkspacePath && !projects.some((project) => project.id === studio.pendingWorkspacePath)
+      ? [{ id: studio.pendingWorkspacePath, label: directoryLabel(studio.pendingWorkspacePath), icon: <FolderOpen aria-hidden="true" size={16} /> }]
+      : []),
+    { id: "::choose-folder", label: translate(studio.locale, "workspace.add"), icon: <FolderPlus aria-hidden="true" size={16} /> }
+  ];
+  const getAnchorRect = useCallback(() => anchorRef.current?.getBoundingClientRect() ?? null, [anchorRef]);
+  return <Menu
+    open={open}
+    anchor={null}
+    items={items}
+    selectedId={selectedId}
+    onSelect={(id: string) => {
+      if (id !== "::choose-folder") {
+        onPick(id);
+        return;
+      }
+      onClose();
+      void studio.pickDirectory().then(async (path) => {
+        if (!path) return;
+        await studio.createWorkspace(path);
+        onPick(path);
+      }).catch((error: unknown) => console.error("OPL Studio workspace pick failed", error));
+    }}
+    onClose={onClose}
+    side="bottom"
+    portal
+    getAnchorRect={getAnchorRect}
+  />;
+}
 
 export function StudioFrame({ surface, renderSlot }: { surface: OplStudioSurface; renderSlot: any }) {
   const [panels, setPanels] = useState({ sidebar: 280, rightbar: 0, rightbarTrack: false, rightbarShown: false, rightbarFullscreen: false, rightbarInstant: false, viewportWidth: globalThis.innerWidth || 1440, narrow: (globalThis.innerWidth || 1440) < 1024, narrowExpanded: false });
@@ -178,6 +230,13 @@ export function SidebarWorkspacesSlot({ wide, expandSidebar }: { wide: boolean; 
   }, [studio.currentThreadId, studio.threadDirectoryStatus, studio.threadProjects]);
   const actions = workspaceStore.actions as Record<string, (...args: any[]) => void>;
   const dshLocale = (key: string, params?: Record<string, unknown>) => translate(studio.locale, key, params);
+  const addWorkspaceFromPicker = useCallback(() => {
+    void studio.pickDirectory().then(async (path) => {
+      if (!path) return;
+      await studio.createWorkspace(path);
+      studio.startSessionInProject(path);
+    }).catch((error: unknown) => console.error("OPL Studio workspace pick failed", error));
+  }, [studio]);
   if (studio.threadDirectoryStatus === "loading") {
     return <><RuntimeNavigation wide={wide} /><div className="opl-thread-directory-status" role="status">{studio.locale === "zh" ? "正在读取 Codex 会话..." : "Loading Codex conversations..."}</div></>;
   }
@@ -208,15 +267,15 @@ export function SidebarWorkspacesSlot({ wide, expandSidebar }: { wide: boolean; 
     insertWorkspaceBefore={(workspaceId: string, beforeWorkspaceId?: string) => studio.insertWorkspaceBefore(workspaceId, beforeWorkspaceId)}
     archiveSession={(threadId: string) => studio.archiveThread(threadId)}
     insertSessionBefore={(workspaceId: string, threadId: string, beforeThreadId?: string) => studio.insertSessionBefore(workspaceId, threadId, beforeThreadId)}
-    createWorkspace={async ({ path }: { path: string }) => studio.createWorkspace(path).then(() => ({ workspaceId: path, path, title: path, sessionIds: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) as never)}
+    createWorkspace={async ({ path }: { path: string }) => { await studio.createWorkspace(path); return workspaceView(path); }}
     searchSessions={async (query: string) => ({ items: await studio.searchThreads(query), hasMore: false })}
     searchResultLimit={100}
-    useDirectoryFlow={() => false}
+    useDirectoryFlow={(selector: any) => selector(true)}
     useHostInfo={(selector: any) => selector({ home: undefined })}
     useShortcuts={useStudioShortcuts}
     useWorkspaceShortcuts={useStudioWorkspaceShortcuts}
     requestSearch={() => undefined}
-    requestAddWorkspace={() => undefined}
+    requestAddWorkspace={addWorkspaceFromPicker}
     closeAddWorkspace={() => undefined}
     setDirectoryBusy={() => undefined}
     dismissForkError={() => undefined}
@@ -308,7 +367,15 @@ export function ConversationSlot({ renderSlot }: { renderSlot: any }) {
   const sessionId = "opl-current";
   const session = { openState: "open", blank: studio.conversationBlank, awaitingFirstTurn: false, promptAttempted: false, pending: [], promptError: null, running: studio.sending, subagent: null, removed: false };
   const sessions = { phase: "ready", current: sessionId, byId: { [sessionId]: { id: sessionId, blank: studio.conversationBlank, cwd: studio.workspacePath, retainedBy: { mainView: 1 } } } };
-  const workspaces = { phase: "ready", items: [{ workspaceId: "opl-workspace", title: studio.projectTitle, sessionIds: [sessionId] }] };
+  const workspaceItems = studio.threadProjects.filter((project) => !project.projectless).map((project) => ({
+    workspaceId: project.id,
+    title: project.label,
+    sessionIds: project.threads.map((thread) => thread.id === studio.currentThreadId ? sessionId : thread.id)
+  }));
+  if (!studio.currentThreadId && studio.pendingWorkspacePath && !workspaceItems.some((item) => item.workspaceId === studio.pendingWorkspacePath)) {
+    workspaceItems.unshift({ workspaceId: studio.pendingWorkspacePath, title: directoryLabel(studio.pendingWorkspacePath), sessionIds: [sessionId] });
+  }
+  const workspaces = { phase: studio.threadDirectoryStatus === "ready" ? "ready" as const : "loading" as const, items: workspaceItems };
   const input = { draft: studio.prompt, attachmentIds: [], draftRev: studio.promptRevision, phase: "plain", occurrences: [], queue: studio.queue };
   return <div className="opl-dsh-conversation-shell">
     <ConversationRoot
@@ -333,7 +400,7 @@ export function ConversationSlot({ renderSlot }: { renderSlot: any }) {
         useComposerBlock={(selector: any) => selector(undefined)}
         renderSlot={renderSlot}
         renderSlotChain={(_key: string, _owner: unknown, chain: { fallback: ReactNode }) => chain.fallback}
-        selectWorkspace={async () => undefined}
+        selectWorkspace={async (workspaceId: string) => studio.selectSessionWorkspace(workspaceId)}
         useFactorySlot={(key: string, fallback: unknown) => key === "views" ? (() => renderSlot("conversation.session", {})) : options.slots?.[key] ?? fallback}
         t={(key: string, params?: Record<string, unknown>) => translate(studio.locale, key, params)}
       />}

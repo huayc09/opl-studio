@@ -22,6 +22,7 @@ export type OplStudioSurface = {
   sessionTitle: string;
   agentPermissions: OplAgentPermission;
   workspacePath: string;
+  pendingWorkspacePath?: string;
   prompt: string;
   promptRevision: number;
   conversationBlank: boolean;
@@ -80,6 +81,8 @@ export type OplStudioSurface = {
   detailsRequestRevision: number;
   startSession(): void;
   startSessionInProject(projectId?: string): void;
+  selectSessionWorkspace(workspaceId: string): void;
+  pickDirectory(): Promise<string | undefined>;
   openThread(threadId: string): void;
   renameSession(threadId: string, title: string): Promise<void>;
   renameWorkspace(workspaceId: string, title: string): Promise<void>;

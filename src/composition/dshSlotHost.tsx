@@ -26,6 +26,7 @@ import {
   ConversationBodySlot,
   ConversationHeaderSlot,
   ConversationSlot,
+  HeroWorkspaceSlot,
   OplBrandMarkSlot,
   SidebarSlot,
   SidebarWorkspacesSlot,
@@ -126,6 +127,7 @@ export class OplStudioDshSlotHost {
     }
     register({ name: "main", key: "conversation", registrant: "dsh-ui-conversation", children: { "conversation.header": { kind: "single", scope: "root" }, "conversation.session": { kind: "single", scope: "root" }, "conversation.composer.bar": { kind: "single", scope: "root" }, "conversation.input.dock": { kind: "list", scope: "root" }, "conversation.hero.brand.mark": { kind: "single", scope: "root" }, "conversation.hero.workspace": { kind: "single", scope: "root" }, "conversation.hero.agentPreset": { kind: "single", scope: "root" }, "conversation.hero.options": { kind: "list", scope: "root" } } }, ConversationSlot);
     register({ name: "conversation.hero.brand.mark", registrant: "opl-studio" }, OplBrandMarkSlot);
+    register({ name: "conversation.hero.workspace", registrant: "opl-studio" }, HeroWorkspaceSlot);
     register({ name: "conversation.header", registrant: "opl-studio" }, ConversationHeaderSlot);
     register({ name: "conversation.session", registrant: "opl-studio" }, ConversationBodySlot);
     register({ name: "conversation.composer.bar", registrant: "dsh-ui-conversation", children: { "conversation.input.attachments": { kind: "single", scope: "root" }, "conversation.input.permission": { kind: "single", scope: "root" }, "conversation.input.plan": { kind: "single", scope: "root" }, "conversation.input.model": { kind: "single", scope: "root" }, "conversation.input.activity": { kind: "single", scope: "root" }, "conversation.input.overlay": { kind: "single", scope: "root" }, "conversation.input.left": { kind: "list", scope: "root" }, "conversation.input.right": { kind: "list", scope: "root" }, "conversation.composer.dock": { kind: "list", scope: "root" } } }, InputBarSlot);

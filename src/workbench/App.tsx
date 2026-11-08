@@ -282,6 +282,11 @@ function localizedSessionTitle(title: string, locale: WorkbenchSettings["locale"
   return title;
 }
 
+function directoryLabel(path: string): string {
+  const parts = path.replace(/[\\/]+$/, "").split(/[\\/]/);
+  return parts.at(-1) || path;
+}
+
 type AppProps = {
   detailTabs: readonly OplStudioDetailTab[];
   renderShell: RenderOplStudioShell;
@@ -372,6 +377,7 @@ export function App({
   const [archivedThreadProjects, setArchivedThreadProjects] = useState<WorkbenchProjectGroup[]>([]);
   const [threadDirectoryStatus, setThreadDirectoryStatus] = useState<"loading" | "ready" | "error">("loading");
   const [threadDirectoryError, setThreadDirectoryError] = useState("");
+  const [pendingWorkspacePath, setPendingWorkspacePath] = useState<string | undefined>(undefined);
   const [messages, setMessages] = useState<ChatMessage[]>(createIntroMessages());
   const [eventFeed, setEventFeed] = useState<string[]>(["bridge.preview_only"]);
   const [codexThreadId, setCodexThreadId] = useState<string | undefined>(persistedUi.metadata.selectedThreadId);
@@ -753,7 +759,28 @@ export function App({
   }
 
   async function createWorkspace(path: string) {
-    throw new Error(settings.locale === "zh" ? `Studio 不会伪造工作区注册：${path}` : `Studio does not create synthetic workspace registrations: ${path}`);
+    const normalized = path.trim();
+    if (!normalized) throw new Error(settings.locale === "zh" ? "请选择工作目录。" : "Choose a working directory.");
+    // A Workspace row is a projection of real thread cwd values, never a
+    // synthetic registry entry. Adopting a directory therefore only arms the
+    // next conversation; the row appears once its first thread is created.
+    setPendingWorkspacePath(normalized);
+  }
+
+  function selectSessionWorkspace(workspaceId: string) {
+    if (codexThreadId) return;
+    if (threadProjects.some((project) => project.id === workspaceId)) {
+      setPendingWorkspacePath(undefined);
+      updateUiMetadata({ selectedProjectId: workspaceId, threadScope: "current" });
+      return;
+    }
+    setPendingWorkspacePath(workspaceId);
+    updateUiMetadata({ selectedProjectId: undefined, threadScope: "current" });
+  }
+
+  async function pickStudioDirectory() {
+    const selected = (await bridge.pickDirectory()).find((item) => item.kind === "folder");
+    return selected?.path;
   }
 
   function updateDrafts(next: (current: WorkbenchDrafts) => WorkbenchDrafts) {
@@ -1313,6 +1340,7 @@ export function App({
       if (sequence !== openThreadSequence.current || selectedThreadIdRef.current !== previousThreadId) return null;
       setPrimaryView("conversation");
       setSelectedRuntimeWorkItemId(undefined);
+      setPendingWorkspacePath(undefined);
       selectedThreadIdRef.current = thread.id;
       setCodexThreadId(thread.id);
       const affinityProjectId = threadProjects.find(project => project.threads.some(item => item.id === thread.id))?.id;
@@ -1982,7 +2010,7 @@ export function App({
           ...selectedAgentInputs()
         ].filter((input, index, inputs) => inputs.findIndex((candidate) => candidate.type === input.type && "path" in candidate && "path" in input && candidate.path === input.path) === index),
         threadId: codexThreadId,
-        cwd: selectedProject?.workspace,
+        cwd: codexThreadId ? undefined : pendingWorkspacePath ?? selectedProject?.workspace,
         agentSelection: codexThreadId ? undefined : selectedAgentSnapshot(),
         turnAgentSelection: codexThreadId ? selectedAgentSnapshot() : undefined,
         additionalInstructions: codexThreadId ? undefined : additionalConversationInstructions,
@@ -2096,6 +2124,7 @@ export function App({
     openThreadSequence.current += 1;
     setPrimaryView("conversation");
     setSelectedRuntimeWorkItemId(undefined);
+    setPendingWorkspacePath(undefined);
     const currentWorkspaceProject = threadProjects.find((project) => !project.projectless && project.threads.some((thread) => thread.currentWorkspace));
     const nextMessages = createIntroMessages();
     messagesRef.current = nextMessages;
@@ -2123,8 +2152,14 @@ export function App({
   }
 
   function startNewChatInProject(projectId?: string) {
-    if (projectId) updateUiMetadata({ selectedProjectId: projectId, threadScope: "current" });
     startNewChat();
+    if (!projectId) return;
+    if (threadProjects.some((project) => project.id === projectId)) {
+      updateUiMetadata({ selectedProjectId: projectId, threadScope: "current" });
+      return;
+    }
+    setPendingWorkspacePath(projectId);
+    updateUiMetadata({ selectedProjectId: undefined, threadScope: "current" });
   }
 
   function threadById(threadId: string) {
@@ -2661,15 +2696,16 @@ export function App({
   );
 
   const voiceInputContext: VoiceInputContext = { threadId: codexThreadId,
-    workspacePath: selectedProject?.workspace ?? currentProject,
+    workspacePath: pendingWorkspacePath ?? selectedProject?.workspace ?? currentProject,
     locale: settings.locale, revision: openThreadSequence.current };
   voiceInputContextRef.current = voiceInputContext;
   return renderShell({
     locale: settings.locale,
-    projectTitle: currentProject,
+    projectTitle: pendingWorkspacePath ? directoryLabel(pendingWorkspacePath) : currentProject,
     sessionTitle: localizedSessionTitle(currentSession?.title || t.newTaskTitle, settings.locale),
     agentPermissions: settings.agentPermissions,
-    workspacePath: selectedProject?.workspace ?? currentProject,
+    workspacePath: pendingWorkspacePath ?? selectedProject?.workspace ?? currentProject,
+    pendingWorkspacePath,
     prompt,
     promptRevision: prompt.length,
     conversationBlank: messages.length === 0,
@@ -2682,6 +2718,8 @@ export function App({
     threadDirectoryError,
     currentThreadId: codexThreadId,
     selectedProjectId: uiMetadata.selectedProjectId,
+    selectSessionWorkspace,
+    pickDirectory: pickStudioDirectory,
     modelOptions,
     modelSelection: effectiveSelection,
     reasoningSelection: resolvedReasoning,
