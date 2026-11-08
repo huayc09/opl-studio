@@ -367,10 +367,15 @@ export function ConversationSlot({ renderSlot }: { renderSlot: any }) {
   const sessionId = "opl-current";
   const session = { openState: "open", blank: studio.conversationBlank, awaitingFirstTurn: false, promptAttempted: false, pending: [], promptError: null, running: studio.sending, subagent: null, removed: false };
   const sessions = { phase: "ready", current: sessionId, byId: { [sessionId]: { id: sessionId, blank: studio.conversationBlank, cwd: studio.workspacePath, retainedBy: { mainView: 1 } } } };
+  const currentProjectId = studio.selectedProjectId
+    ?? studio.threadProjects.find((project) => !project.projectless && (project.workspace ?? project.label) === studio.workspacePath)?.id;
   const workspaceItems = studio.threadProjects.filter((project) => !project.projectless).map((project) => ({
     workspaceId: project.id,
     title: project.label,
-    sessionIds: project.threads.map((thread) => thread.id === studio.currentThreadId ? sessionId : thread.id)
+    sessionIds: [
+      ...project.threads.map((thread) => thread.id === studio.currentThreadId ? sessionId : thread.id),
+      ...(!studio.currentThreadId && project.id === currentProjectId ? [sessionId] : [])
+    ]
   }));
   if (!studio.currentThreadId && studio.pendingWorkspacePath && !workspaceItems.some((item) => item.workspaceId === studio.pendingWorkspacePath)) {
     workspaceItems.unshift({ workspaceId: studio.pendingWorkspacePath, title: directoryLabel(studio.pendingWorkspacePath), sessionIds: [sessionId] });
