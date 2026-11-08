@@ -47,7 +47,7 @@ export const CODEX_APP_SERVER = {
     ":read-only": { approvalPolicy: "on-request", sandbox: "read-only" }
   },
   requestTimeoutSeconds: 45,
-  turnTimeoutSeconds: 180
+  turnTimeoutSeconds: 300
 } as const;
 
 

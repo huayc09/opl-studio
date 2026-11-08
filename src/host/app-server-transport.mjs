@@ -49,7 +49,7 @@ export class CodexAppServerTransport extends EventEmitter {
     const host = options.host ?? os.hostname();
     const clientVersion = options.clientVersion ?? env.OPL_APP_VERSION ?? "unknown";
     const requestTimeoutMs = options.requestTimeoutMs ?? 45_000;
-    const turnTimeoutMs = options.turnTimeoutMs ?? 180_000;
+    const turnTimeoutMs = options.turnTimeoutMs ?? 300_000;
     this.command = command;
     this.args = args;
     this.cwd = cwd;
@@ -798,16 +798,35 @@ export class CodexAppServerTransport extends EventEmitter {
     return new Promise((resolve, reject) => {
       const bucket = existing ?? { events: [], text: "", waiters: [] };
       bucket.waiters ??= [];
-      const timeout = setTimeout(() => {
-        bucket.waiters = bucket.waiters.filter((waiter) => waiter.resolve !== resolve);
-        reject(new AppServerTransportError("turn_timeout", `Turn timed out: ${turnId}`, { turnId }));
-      }, timeoutMs);
+      bucket.lastActivityAt ??= Date.now();
+      let timer;
+      const arm = () => {
+        const idle = Date.now() - bucket.lastActivityAt;
+        timer = setTimeout(() => {
+          const idleNow = Date.now() - bucket.lastActivityAt;
+          if (idleNow < timeoutMs) {
+            arm();
+            return;
+          }
+          clearTimeout(timer);
+          bucket.waiters = bucket.waiters.filter((waiter) => waiter.resolve !== resolve);
+          reject(new AppServerTransportError(
+            "turn_timeout",
+            `Turn timed out after ${timeoutMs}ms without events: ${turnId}`,
+            { turnId }
+          ));
+        }, Math.max(0, timeoutMs - idle));
+      };
+      arm();
       bucket.waiters.push({
         resolve: (value) => {
-          clearTimeout(timeout);
+          clearTimeout(timer);
           resolve(value);
         },
-        reject
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        }
       });
       this.turns.set(turnId, bucket);
     });
@@ -916,6 +935,7 @@ export class CodexAppServerTransport extends EventEmitter {
       this.#notifyIdleIfPossible();
     }
     const bucket = this.turns.get(turnId) ?? { events: [], text: "", waiters: [] };
+    bucket.lastActivityAt = Date.now();
     bucket.events.push(message);
     if (message.method === "item/agentMessage/delta" && typeof params.delta === "string") {
       bucket.text += params.delta;
