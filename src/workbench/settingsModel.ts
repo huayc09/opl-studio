@@ -134,6 +134,11 @@ function browserStorage(): SettingsStorage | undefined {
 }
 
 function normalizeSetting<Key extends SettingKey>(key: Key, value: unknown): WorkbenchSettings[Key] {
+  if (key === "modelAccess") {
+    return (value === "__auto" || (typeof value === "string" && value.trim().length > 0))
+      ? value as WorkbenchSettings[Key]
+      : settingsDefaults[key];
+  }
   const allowed = allowedSettingsValues[key] as readonly unknown[];
   return allowed.includes(value) ? value as WorkbenchSettings[Key] : settingsDefaults[key];
 }
