@@ -408,6 +408,10 @@ button.crumb:hover {
      the column's edge instead of flush against it. */
   margin-right: 2px;
   overflow-y: auto;
+  /* Live output and history paging own scroll placement explicitly. Native
+     anchor jumps otherwise move a reader when streaming content or the sticky
+     composer changes height above or below the current viewport. */
+  overflow-anchor: none;
   /* Reserved unconditionally: the composer seat rides this box's content box in
      Chat and its padding box under a view's composer overlay, so an `auto`
      gutter moves the input card sideways by the bar's width whenever the two

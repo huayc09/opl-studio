@@ -796,6 +796,7 @@ test("Studio boots as the pinned DSH Application Host while Codex remains the th
 
 test("primary canvas hides its scrollbar without disabling scrolling", () => {
   assert.match(conversationStyles, /\.scrollBody \{[^}]*overflow-y: auto;/s);
+  assert.match(conversationStyles, /\.scrollBody \{[^}]*overflow-anchor: none;/s);
   assert.match(styles, /\.settings-detail \{[^}]*overflow-y: auto;[^}]*scrollbar-width: none;/s);
   const workspaceStyles = read("src/vendor/deepseek-harness/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.module.css");
   assert.match(workspaceStyles, /\.list \{[\s\S]*overflow-y: auto;/);

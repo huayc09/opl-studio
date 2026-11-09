@@ -113,6 +113,7 @@ import { ThreadDetailPopover } from "./threads/ThreadDetailPopover";
 import { ThreadLifecycleConfirmationDialog } from "./threads/ThreadLifecycleConfirmationDialog";
 import type { ThreadLifecycleAction } from "./threads/ThreadLifecycleConfirmationDialog";
 import { ConversationMessages } from "./ConversationMessages";
+import { isConversationNearEnd, shouldAutoFollowConversation } from "./conversationScrollPolicy";
 import { assistantDisplayMarkdown } from "./messageDisplay";
 import {
   ComposerCapabilityPalette,
@@ -310,6 +311,8 @@ export function App({
   const persistedUi = useMemo(() => readPersistedWorkbenchUi(), []);
   const cachedRuntime = useMemo(() => readRuntimeOverviewCache(), []);
   const conversationRef = useRef<HTMLElement | null>(null);
+  const conversationFollowLatestRef = useRef(true);
+  const conversationForceEndRef = useRef(true);
   const pendingAssistantIdRef = useRef<string | null>(null);
   const interruptRequestedForRef = useRef<string | null>(null);
   const messagesRef = useRef<ChatMessage[]>(createIntroMessages());
@@ -698,12 +701,51 @@ export function App({
   }, [settings.fontSize]);
 
   useEffect(() => {
+    const scrollport = conversationRef.current?.closest<HTMLElement>("[data-conversation-scroll]");
+    conversationFollowLatestRef.current = true;
+    conversationForceEndRef.current = true;
+    if (!scrollport) return;
+    const updateFollowing = () => {
+      conversationFollowLatestRef.current = isConversationNearEnd(scrollport);
+    };
+    scrollport.addEventListener("scroll", updateFollowing, { passive: true });
+    return () => scrollport.removeEventListener("scroll", updateFollowing);
+  }, [codexThreadId]);
+
+  useEffect(() => {
     if (!codexThreadId || !messages.length) return;
     const frame = globalThis.requestAnimationFrame?.(() => {
-      conversationRef.current?.scrollIntoView({ block: historyEnd === messages.length ? "end" : "start" });
+      const thread = conversationRef.current;
+      const scrollport = thread?.closest<HTMLElement>("[data-conversation-scroll]");
+      if (!thread || !scrollport) return;
+      const atLatest = historyEnd === messages.length;
+      if (!atLatest) {
+        conversationFollowLatestRef.current = false;
+        conversationForceEndRef.current = false;
+        thread.scrollIntoView({ block: "start" });
+        return;
+      }
+      const forceEnd = conversationForceEndRef.current;
+      conversationForceEndRef.current = false;
+      const composerFocused = scrollport
+        .querySelector('[data-conversation-region="composer"]')
+        ?.contains(document.activeElement) === true;
+      if (forceEnd || shouldAutoFollowConversation({
+        atLatest,
+        followingLatest: conversationFollowLatestRef.current,
+        composerFocused
+      })) {
+        scrollport.scrollTop = scrollport.scrollHeight;
+      }
     });
     return () => { if (frame !== undefined) globalThis.cancelAnimationFrame?.(frame); };
   }, [codexThreadId, historyStart, historyEnd]);
+
+  function showLatestConversation() {
+    conversationFollowLatestRef.current = true;
+    conversationForceEndRef.current = true;
+    setHistoryPage(null);
+  }
 
   function updateUiMetadata(next: Partial<WorkbenchUiMetadata>) {
     setUiMetadata((current) => {
@@ -1988,6 +2030,8 @@ export function App({
     const pendingId = `assistant-${Date.now()}`;
     const pendingMessage: ChatMessage = { id: pendingId, role: "assistant", text: "" };
     const pendingMessages = messagesRef.current.concat([userMessage, pendingMessage]);
+    conversationFollowLatestRef.current = true;
+    conversationForceEndRef.current = true;
     setHistoryPage(null);
     pendingAssistantIdRef.current = pendingId;
     messagesRef.current = pendingMessages;
@@ -2426,8 +2470,8 @@ export function App({
     <nav style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap", padding: "12px 0" }} aria-label={settings.locale === "zh" ? "会话历史分页" : "Conversation history pages"}>
       <button type="button" disabled={historyStart === 0} onClick={() => setHistoryPage({ threadId: codexThreadId, end: historyStart })}><ChevronLeft size={16} />{settings.locale === "zh" ? "更早消息" : "Earlier"}</button>
       <span>{historyStart + 1}-{historyEnd} / {messages.length}</span>
-      <button type="button" disabled={historyEnd === messages.length} onClick={() => setHistoryPage(historyEnd + 40 >= messages.length ? null : { threadId: codexThreadId, end: historyEnd + 40 })}>{settings.locale === "zh" ? "后续消息" : "Later"}<ArrowRight size={16} /></button>
-      <button type="button" disabled={historyEnd === messages.length} onClick={() => setHistoryPage(null)}>{settings.locale === "zh" ? "最新消息" : "Latest"}</button>
+      <button type="button" disabled={historyEnd === messages.length} onClick={() => historyEnd + 40 >= messages.length ? showLatestConversation() : setHistoryPage({ threadId: codexThreadId, end: historyEnd + 40 })}>{settings.locale === "zh" ? "后续消息" : "Later"}<ArrowRight size={16} /></button>
+      <button type="button" disabled={historyEnd === messages.length} onClick={showLatestConversation}>{settings.locale === "zh" ? "最新消息" : "Latest"}</button>
     </nav>
   ) : null;
 
